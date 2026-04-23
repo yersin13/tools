@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "PowerShell(python --version 2>&1)",
+      "PowerShell(Start-Process python -ArgumentList \"-m http.server 5173 --directory `\"c:\\\\Users\\\\Yersin\\\\Downloads\\\\list-to-comma-app-v8.2-shipping-tool\\\\dist`\"\" -WindowStyle Hidden)",
+      "PowerShell(Start-Process \"http://localhost:5173\")",
+      "Bash(npm config *)"
+    ]
+  }
+}
