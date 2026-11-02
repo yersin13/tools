@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { buildPutawayOutput, PUTAWAY_STEPS, FIELD_LABELS, FULL_HINT } from './putawayQueries.js'
 
 function parseSingleColumn(text) {
   return text.split(/[\r\n\t,;]+/).map(i => i.trim()).filter(Boolean)
@@ -140,7 +141,7 @@ function buildPrtdscOutput(values, mode) {
   return `[select colval,\n        locale_id,\n        lngdsc\n   from prtdsc\n  where (${baseFilter})\n    and locale_id = '${locale}'\n    and colval like '%y10']`
 }
 
-const TOOLS = ['prtnum', 'prtdsc', 'locmst', 'receiving', 'shipping', 'multibox']
+const TOOLS = ['prtnum', 'prtdsc', 'locmst', 'receiving', 'shipping', 'multibox', 'putaway']
 
 const TOOL_META = {
   prtnum: {
@@ -197,6 +198,15 @@ const TOOL_META = {
     inputLabel: 'Multibox input',
     placeholder: `By inbound:\nRCV-TRAINING-02\n\nBy part:\n3023571`,
   },
+  putaway: {
+    title: 'Putaway Troubleshooting',
+    subtitle: 'Diagnose why an LPN gets no storage location (ERR 11125), one gate at a time.',
+    kicker: 'Inbound',
+    short: 'Putaway',
+    desc: 'LPN, part, search path, zones, locations.',
+    inputLabel: 'Putaway fields',
+    placeholder: '',
+  },
 }
 
 const DEFAULT_MODES = {
@@ -206,7 +216,10 @@ const DEFAULT_MODES = {
   receiving: 'receiving-detail-rdck',
   shipping: 'shipping-detail-trailer',
   multibox: 'multibox-by-inbound',
+  putaway: '1A',
 }
+
+const PUTAWAY_FIELD_DEFAULTS = { lodnum: '', wh_id: '', cur_bldg_id: '', sto_config_id: '', sto_zone_cod: '' }
 
 function loadSaved() {
   try {
@@ -239,6 +252,7 @@ export default function App() {
   const [history, setHistory] = useState(saved?.history ?? [])
   const [showHistory, setShowHistory] = useState(false)
   const [openHints, setOpenHints] = useState({})
+  const [putawayFields, setPutawayFields] = useState({ ...PUTAWAY_FIELD_DEFAULTS, ...(saved?.putawayFields ?? {}) })
 
   const input = inputs[tool]
   const setInput = useCallback(v => setInputs(p => ({ ...p, [tool]: v })), [tool])
@@ -249,6 +263,7 @@ export default function App() {
   const setReceivingMode = v => setModes(p => ({ ...p, receiving: v }))
   const setShippingMode = v => setModes(p => ({ ...p, shipping: v }))
   const setMultiboxMode = v => setModes(p => ({ ...p, multibox: v }))
+  const setPutawayMode = v => setModes(p => ({ ...p, putaway: v }))
 
   const prtnumMode = modes.prtnum
   const prtdscMode = modes.prtdsc
@@ -256,6 +271,7 @@ export default function App() {
   const receivingMode = modes.receiving
   const shippingMode = modes.shipping
   const multiboxMode = modes.multibox
+  const putawayMode = modes.putaway ?? '1A'
 
   const prtnumItems = useMemo(() => parseSingleColumn(inputs.prtnum), [inputs.prtnum])
   const parsedPairs = useMemo(() => parseLocationPairs(inputs.locmst), [inputs.locmst])
@@ -269,6 +285,7 @@ export default function App() {
   const invalidPairs = useMemo(() => parsedPairs.filter(r => !r.valid), [parsedPairs])
 
   const currentItems = useMemo(() => {
+    if (tool === 'putaway') return []
     if (tool === 'locmst') return locmstLocations
     if (tool === 'receiving') return receivingValues
     if (tool === 'shipping') return shippingValues
@@ -285,6 +302,7 @@ export default function App() {
   }, [currentItems])
 
   const autoDetect = useMemo(() => {
+    if (tool === 'putaway') return null
     if (!input.trim() || currentItems.length === 0) return null
     if (currentItems.every(v => /^TRL/i.test(v)) && tool !== 'shipping')
       return { suggestTool: 'shipping', suggestMode: 'shipping-detail-trailer', label: 'Looks like trailer numbers — switch to Shipping?' }
@@ -305,19 +323,25 @@ export default function App() {
     : locmstLocations.length > 0 ? locmstLocations.length === locmstRowsOutput : true
 
   const output = useMemo(() => {
+    if (tool === 'putaway') return buildPutawayOutput(putawayFields, putawayMode)
     if (tool === 'locmst') return buildLocmstOutput(validPairs, locmstLocations, locmstMode)
     if (tool === 'receiving') return buildReceivingOutput(receivingValues, receivingMode)
     if (tool === 'shipping') return buildShippingOutput(shippingValues, shippingMode)
     if (tool === 'multibox') return buildMultiboxOutput(multiboxValues, multiboxMode)
     if (tool === 'prtdsc') return buildPrtdscOutput(prtdscValues, prtdscMode)
     return buildPrtnumOutput(prtnumItems, prtnumMode)
-  }, [tool, validPairs, locmstLocations, locmstMode, receivingValues, receivingMode, shippingValues, shippingMode, multiboxValues, multiboxMode, prtdscValues, prtdscMode, prtnumItems, prtnumMode])
+  }, [tool, putawayFields, putawayMode, validPairs, locmstLocations, locmstMode, receivingValues, receivingMode, shippingValues, shippingMode, multiboxValues, multiboxMode, prtdscValues, prtdscMode, prtnumItems, prtnumMode])
 
   const inputCount = tool === 'locmst' ? locmstRowsPasted : currentItems.length
   const outputCount = tool === 'locmst' ? locmstRowsOutput : inputCount
   const countsMatch = tool === 'locmst'
     ? locmstCountsMatch
     : inputCount > 0 ? inputCount === outputCount : true
+
+  const putawayFilledCount = useMemo(
+    () => Object.values(putawayFields).filter(v => v !== '').length,
+    [putawayFields],
+  )
 
   const toolCounts = useMemo(() => ({
     prtnum: prtnumItems.length,
@@ -326,11 +350,12 @@ export default function App() {
     receiving: receivingValues.length,
     shipping: shippingValues.length,
     multibox: multiboxValues.length,
-  }), [prtnumItems.length, prtdscValues.length, locmstLocations.length, receivingValues.length, shippingValues.length, multiboxValues.length])
+    putaway: putawayFilledCount,
+  }), [prtnumItems.length, prtdscValues.length, locmstLocations.length, receivingValues.length, shippingValues.length, multiboxValues.length, putawayFilledCount])
 
   useEffect(() => {
     try {
-      localStorage.setItem('wms-state', JSON.stringify({ tool, inputs, modes, darkMode, history }))
+      localStorage.setItem('wms-state', JSON.stringify({ tool, inputs, modes, darkMode, history, putawayFields }))
     } catch {}
   }, [tool, inputs, modes, darkMode, history])
 
@@ -346,6 +371,9 @@ export default function App() {
   useEffect(() => { inputRef.current = input }, [input])
   useEffect(() => { toolRef.current = tool }, [tool])
   useEffect(() => { modesRef.current = modes }, [modes])
+
+  const putawayFieldsRef = useRef(putawayFields)
+  useEffect(() => { putawayFieldsRef.current = putawayFields }, [putawayFields])
 
   const copyTimerRef = useRef(null)
   const undoTimerRef = useRef(null)
@@ -370,6 +398,15 @@ export default function App() {
 
   const clearAll = useCallback(() => {
     const t = toolRef.current
+    if (t === 'putaway') {
+      const fields = putawayFieldsRef.current
+      if (!Object.values(fields).some(v => v !== '')) return
+      setUndoEntry({ tool: t, value: fields })
+      setPutawayFields({ ...PUTAWAY_FIELD_DEFAULTS })
+      clearTimeout(undoTimerRef.current)
+      undoTimerRef.current = setTimeout(() => setUndoEntry(null), 6000)
+      return
+    }
     const v = inputRef.current
     if (!v) return
     setUndoEntry({ tool: t, value: v })
@@ -380,7 +417,11 @@ export default function App() {
 
   function handleUndo() {
     if (!undoEntry) return
-    setInputs(p => ({ ...p, [undoEntry.tool]: undoEntry.value }))
+    if (undoEntry.tool === 'putaway') {
+      setPutawayFields(undoEntry.value)
+    } else {
+      setInputs(p => ({ ...p, [undoEntry.tool]: undoEntry.value }))
+    }
     setUndoEntry(null)
   }
 
@@ -411,6 +452,17 @@ export default function App() {
   function toggleHint(id) { setOpenHints(p => ({ ...p, [id]: !p[id] })) }
 
   const activeMeta = TOOL_META[tool]
+
+  const putawayStepInfo = useMemo(() => {
+    if (tool !== 'putaway') return null
+    if (putawayMode === 'FULL') {
+      return { id: 'FULL', needs: [], missing: [] }
+    }
+    const step = PUTAWAY_STEPS.find(s => s.id === putawayMode)
+    if (!step) return { id: putawayMode, needs: [], missing: [] }
+    const missing = step.needs.filter(k => !putawayFields[k]?.trim())
+    return { id: step.id, needs: step.needs, missing }
+  }, [tool, putawayMode, putawayFields])
 
   return (
     <div className="page">
@@ -468,17 +520,42 @@ export default function App() {
           </div>
 
           <div className="stats-grid">
-            <div className="stat-card"><span className="label">Rows pasted</span><strong>{inputCount}</strong></div>
-            <div className="stat-card"><span className="label">Rows in output</span><strong>{outputCount}</strong></div>
-            <div className={`stat-card ${countsMatch ? 'ok' : 'bad'}`}>
-              <span className="label">Count check</span>
-              <strong>{countsMatch ? 'MATCH' : 'CHECK'}</strong>
-            </div>
-            {duplicateCount > 0 && (
-              <div className="stat-card warn">
-                <span className="label">Duplicates</span>
-                <strong>{duplicateCount}</strong>
-              </div>
+            {tool === 'putaway' && putawayStepInfo ? (
+              <>
+                <div className="stat-card">
+                  <span className="label">Step</span>
+                  <strong>{putawayStepInfo.id}</strong>
+                </div>
+                <div className="stat-card">
+                  <span className="label">Needs</span>
+                  <strong style={{ fontSize: '0.82rem' }}>
+                    {putawayStepInfo.needs.length === 0 ? '—' : putawayStepInfo.needs.map(k => FIELD_LABELS[k]).join(', ')}
+                  </strong>
+                </div>
+                <div className={`stat-card ${putawayStepInfo.missing.length === 0 ? 'ok' : 'bad'}`}>
+                  <span className="label">Status</span>
+                  <strong style={{ fontSize: '0.82rem' }}>
+                    {putawayStepInfo.missing.length === 0
+                      ? 'READY'
+                      : 'MISSING: ' + putawayStepInfo.missing.map(k => FIELD_LABELS[k]).join(', ')}
+                  </strong>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="stat-card"><span className="label">Rows pasted</span><strong>{inputCount}</strong></div>
+                <div className="stat-card"><span className="label">Rows in output</span><strong>{outputCount}</strong></div>
+                <div className={`stat-card ${countsMatch ? 'ok' : 'bad'}`}>
+                  <span className="label">Count check</span>
+                  <strong>{countsMatch ? 'MATCH' : 'CHECK'}</strong>
+                </div>
+                {duplicateCount > 0 && (
+                  <div className="stat-card warn">
+                    <span className="label">Duplicates</span>
+                    <strong>{duplicateCount}</strong>
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -491,24 +568,53 @@ export default function App() {
 
           <div className="editor-grid">
             <section className="editor-panel">
-              <div className="input-label-row">
-                <label className="section-label" htmlFor="input">{activeMeta.inputLabel}</label>
-                <div className="cleanup-row">
-                  {duplicateCount > 0 && (
-                    <button className="xs-btn warn-btn" onClick={dedupeInput}>
-                      Dedupe ({duplicateCount})
-                    </button>
-                  )}
-                  <button className="xs-btn" onClick={uppercaseInput} title="Convert all to uppercase">AA</button>
-                  <button className="xs-btn" onClick={trimInput} title="Strip whitespace and empty rows">Trim</button>
-                </div>
-              </div>
-              <textarea
-                id="input"
-                placeholder={activeMeta.placeholder}
-                value={input}
-                onChange={e => setInput(e.target.value)}
-              />
+              {tool === 'putaway' ? (
+                <>
+                  <label className="section-label">Fields</label>
+                  <div className="putaway-form">
+                    {[
+                      { key: 'lodnum',        label: 'LPN',            placeholder: 'PLC2000000003NE', required: true },
+                      { key: 'wh_id',         label: 'Warehouse',      placeholder: 'U10',             required: true },
+                      { key: 'cur_bldg_id',   label: 'Building',       placeholder: 'B1',              required: false },
+                      { key: 'sto_config_id', label: 'Search path ID', placeholder: '000047',          required: false },
+                      { key: 'sto_zone_cod',  label: 'Storage zone',   placeholder: 'SZ-SPL1-BULK',    required: false },
+                    ].map(({ key, label, placeholder }) => (
+                      <div key={key} className="putaway-field">
+                        <label htmlFor={`pf-${key}`}>{label}</label>
+                        <input
+                          id={`pf-${key}`}
+                          type="text"
+                          placeholder={placeholder}
+                          value={putawayFields[key]}
+                          onChange={e => setPutawayFields(p => ({ ...p, [key]: e.target.value.trim() === '' ? '' : e.target.value }))}
+                          onBlur={e => setPutawayFields(p => ({ ...p, [key]: e.target.value.trim() }))}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="input-label-row">
+                    <label className="section-label" htmlFor="input">{activeMeta.inputLabel}</label>
+                    <div className="cleanup-row">
+                      {duplicateCount > 0 && (
+                        <button className="xs-btn warn-btn" onClick={dedupeInput}>
+                          Dedupe ({duplicateCount})
+                        </button>
+                      )}
+                      <button className="xs-btn" onClick={uppercaseInput} title="Convert all to uppercase">AA</button>
+                      <button className="xs-btn" onClick={trimInput} title="Strip whitespace and empty rows">Trim</button>
+                    </div>
+                  </div>
+                  <textarea
+                    id="input"
+                    placeholder={activeMeta.placeholder}
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                  />
+                </>
+              )}
             </section>
 
             <section className="editor-panel options-panel">
@@ -624,6 +730,45 @@ export default function App() {
                   </div>
                   <HintBox id="multibox" title="Multibox helper" openHints={openHints} onToggle={toggleHint}>
                     <code>[select prtnum, to_lodnum as created_lpn, trnqty, movref, frstol, tostol from dlytrn where to_lodnum is not null and trnqty is not null ...]</code>
+                  </HintBox>
+                </>
+              )}
+
+              {tool === 'putaway' && (
+                <>
+                  {[
+                    { group: 'Gate 1 – LPN & part',  ids: ['1A', '1B'] },
+                    { group: 'Gate 2 – Search path',  ids: ['2A', '2B', '2C'] },
+                    { group: 'Gate 3 – Locations',    ids: ['3A', '3B'] },
+                    { group: 'Optional',              ids: ['O1', 'O2', 'O3', 'O4', 'O5'] },
+                    { group: 'Result',                ids: ['R2'] },
+                    { group: 'All',                   ids: ['FULL'] },
+                  ].map(({ group, ids }) => (
+                    <div key={group} className="option-group">
+                      <span className="group-title">{group}</span>
+                      <div className="pill-group">
+                        {ids.map(id => {
+                          const step = PUTAWAY_STEPS.find(s => s.id === id)
+                          const label = step ? step.label : id
+                          return (
+                            <button
+                              key={id}
+                              className={putawayMode === id ? 'active' : ''}
+                              onClick={() => setPutawayMode(id)}
+                            >
+                              {id} {label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                  <HintBox id="putaway" title="Reading guide" openHints={openHints} onToggle={toggleHint}>
+                    {(() => {
+                      if (putawayMode === 'FULL') return <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{FULL_HINT}</pre>
+                      const step = PUTAWAY_STEPS.find(s => s.id === putawayMode)
+                      return step ? <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{step.hint}</pre> : null
+                    })()}
                   </HintBox>
                 </>
               )}
