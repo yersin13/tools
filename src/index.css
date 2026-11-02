@@ -640,3 +640,39 @@ code, pre {
   .workspace h1 { font-size: 1.65rem; }
   .stats-grid { flex-direction: column; }
 }
+
+/* ─── Putaway form ───────────────────────────────────────────────────────── */
+
+.putaway-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.putaway-field label {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 700;
+  margin-bottom: 5px;
+  color: var(--text);
+}
+
+.putaway-field input {
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: #fbfdff;
+  color: var(--text);
+  font: inherit;
+}
+
+.putaway-field input:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+[data-dark="1"] .putaway-field input {
+  background: #0d192c;
+  color: var(--text);
+}
